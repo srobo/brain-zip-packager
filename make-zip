@@ -1,11 +1,18 @@
 #!/usr/bin/env python
 import os, sys, tempfile, subprocess, shutil, re, argparse
+import yaml
 
 parser = argparse.ArgumentParser(description='Pack a robot.zip from user code.')
+parser.add_argument('team_tla',
+                    nargs='?',
+                    help='The TLA of the team the zip is being created for')
 parser.add_argument('usercode',
                     help='user code source directory, containing a robot.py')
 parser.add_argument('output',
                     help='output zip file')
+parser.add_argument("-w", "--wifi",
+                    default="/srv/secrets/wifi-keys.yaml",
+                    help="YAML file to get wifi keys from")
 
 args = parser.parse_args()
 
@@ -27,6 +34,22 @@ subprocess.check_call( "cp -r %s/* %s" % (BASE_DIR, tmpd),
 
 # Copy in the user's code
 subprocess.check_call( ["cp", "-r", USER_CODE_DIR, os.path.join( tmpd, "user" )] )
+
+# Do the wifi key dance
+default_wifi = True
+if os.path.exists(args.wifi) and args.team_tla is not None:
+    with open(args.wifi, "r") as f:
+        y = yaml.load(f)
+
+    if args.team_tla in y:
+        with open(os.path.join(tmpd, "wifi.yaml"), "w") as f:
+            yaml.dump( { "ssid": "robot-{}".format(args.team_tla),
+                         "key": y[args.team_tla] }, f,
+                       default_flow_style=False )
+            default_wifi = False
+
+if default_wifi:
+    print "Default wifi keys used"
 
 # Temporary directory for the zipfile to reside in
 ziptmpd = tempfile.mkdtemp( suffix="-pyenv" )
