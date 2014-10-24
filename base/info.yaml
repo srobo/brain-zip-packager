@@ -1,6 +1,6 @@
 overlay:
   type: "internal"
-  filename: "overlay.squashfs"
+  filename: "overlay.squashfs.rc3"
   filesize: 921600
 
 
