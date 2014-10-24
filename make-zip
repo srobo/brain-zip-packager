@@ -11,7 +11,7 @@ parser.add_argument('usercode',
 parser.add_argument('output',
                     help='output zip file')
 parser.add_argument("-w", "--wifi",
-                    default="/srv/secrets/wifi-keys.yaml",
+                    default="/etc/sr/wifi-keys.yaml",
                     help="YAML file to get wifi keys from")
 
 args = parser.parse_args()
