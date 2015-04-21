@@ -1,6 +1,6 @@
 overlay:
   type: "internal"
-  filename: "overlay.squashfs.sr2015.2"
-  filesize: 921600
+  filename: "overlay.sr2015.3.squash"
+  filesize: 1339392
 
 
