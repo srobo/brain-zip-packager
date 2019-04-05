@@ -1,4 +1,4 @@
 overlay:
   type: "internal"
-  filename: "overlay.sr2019.2.squash"
+  filename: "overlay.sr2019.3.squash"
   filesize: 364544
