@@ -43,13 +43,13 @@ subprocess.check_call( ["cp", "-r", USER_CODE_DIR, os.path.join( tmpd, "user" )]
 default_wifi = True
 if os.path.exists(args.wifi) and args.team_tla is not None:
     with open(args.wifi, "r") as f:
-        y = yaml.load(f)
+        y = yaml.safe_load(f)
 
     if args.team_tla in y:
         with open(os.path.join(tmpd, "wifi.yaml"), "w") as f:
-            yaml.dump( { "ssid": "robot-{}".format(args.team_tla),
-                         "key": y[args.team_tla] }, f,
-                       default_flow_style=False )
+            yaml.safe_dump( { "ssid": "robot-{}".format(args.team_tla),
+                              "key": y[args.team_tla] }, f,
+                            default_flow_style=False )
             default_wifi = False
 
 if default_wifi:
