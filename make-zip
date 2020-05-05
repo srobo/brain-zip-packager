@@ -2,7 +2,7 @@
 
 from __future__ import print_function
 
-import os, sys, tempfile, subprocess, shutil, re, argparse
+import os, sys, tempfile, subprocess, shutil, re, argparse, zipfile, stat
 import yaml
 
 parser = argparse.ArgumentParser(description='Pack a robot.zip from user code.')
@@ -33,11 +33,12 @@ assert os.path.isdir( BASE_DIR )
 # Temporary directory for constructing everything inside
 tmpd = tempfile.mkdtemp( suffix="-pyenv" )
 
-subprocess.check_call( "cp -r %s/* %s" % (BASE_DIR, tmpd),
-                       shell = True )
+# annoyingly, copytree creates the directory instead of merging in Python 2
+shutil.rmtree( tmpd )
+shutil.copytree(BASE_DIR, tmpd)
 
 # Copy in the user's code
-subprocess.check_call( ["cp", "-r", USER_CODE_DIR, os.path.join( tmpd, "user" )] )
+shutil.copytree(USER_CODE_DIR, os.path.join(tmpd, "user"))
 
 # Do the wifi key dance
 default_wifi = True
@@ -59,12 +60,21 @@ if default_wifi:
 ziptmpd = tempfile.mkdtemp( suffix="-pyenv" )
 tmpzip = os.path.join( ziptmpd, "robot.zip" )
 
-subprocess.check_call( ["zip", "-9qr", tmpzip, "./"], cwd = tmpd )
+with zipfile.ZipFile(tmpzip, 'w', zipfile.ZIP_DEFLATED) as zip:
+    for folderName, subfolders, filenames in os.walk(tmpd):
+        relativeFolder = os.path.relpath(folderName, tmpd)
+        for filename in filenames:
+            zip.write(os.path.join(folderName, filename), os.path.join(relativeFolder, filename))
+
 
 if os.path.exists( OUTPUT_ZIP ):
     os.unlink( OUTPUT_ZIP )
 
 shutil.move( tmpzip, OUTPUT_ZIP )
 
-shutil.rmtree( ziptmpd )
-shutil.rmtree( tmpd )
+def ensureWritable(function, path, exc_info):
+    os.chmod(path, stat.S_IWRITE)
+    function(path)
+
+shutil.rmtree( ziptmpd, onerror = ensureWritable)
+shutil.rmtree( tmpd, onerror = ensureWritable)
