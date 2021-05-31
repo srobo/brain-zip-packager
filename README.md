@@ -32,3 +32,12 @@ optional arguments:
   -r REGION, --region REGION
                         Region information for the WiFi hotspot
 ```
+
+## Development
+
+This project uses [poetry](https://python-poetry.org/) to manage it's development dependencies.
+
+GNU Make is used to handle running the test suite.
+
+- Install dependencies to virtualenv: `poetry install`
+- Run type checking and linting: `make`
