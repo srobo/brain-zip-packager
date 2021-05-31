@@ -1,80 +1,183 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
+"""
+Utility to create usercode bundles (robot.zip) file compatible with SR kit.
 
-from __future__ import print_function
+This version of the utility is intended for use with post SR2022 kit, which
+uses the astoria robot management system and the associated usercode format.
+"""
+import argparse
+import os
+import sys
+from fnmatch import fnmatch
+from pathlib import Path
+from typing import Dict, Union
+from zipfile import ZIP_DEFLATED, ZipFile
 
-import os, sys, tempfile, subprocess, shutil, re, argparse, zipfile, stat
-import yaml
+import toml
 
-parser = argparse.ArgumentParser(description='Pack a robot.zip from user code.')
-parser.add_argument('team_tla',
-                    nargs='?',
-                    help='The TLA of the team the zip is being created for')
-parser.add_argument('usercode',
-                    help='user code source directory, containing a robot.py')
-parser.add_argument('output',
-                    help='output zip file')
-parser.add_argument("-w", "--wifi",
-                    default="/etc/sr/wifi-keys.yaml",
-                    help="YAML file to get wifi keys from")
-
-args = parser.parse_args()
-
-USER_CODE_DIR, OUTPUT_ZIP = args.usercode, args.output
-
-if not os.path.isdir( USER_CODE_DIR ):
-    print("Error: Supplied user directory path is not a directory.",
-          file=sys.stderr)
-    exit(1)
-
-REPO_ROOT = os.path.dirname( __file__ )
-BASE_DIR = os.path.join( REPO_ROOT, "base" )
-assert os.path.isdir( BASE_DIR )
-
-# Temporary directory for constructing everything inside
-tmpd = tempfile.mkdtemp( suffix="-pyenv" )
-
-# annoyingly, copytree creates the directory instead of merging in Python 2
-shutil.rmtree( tmpd )
-shutil.copytree(BASE_DIR, tmpd)
-
-# Copy in the user's code
-shutil.copytree(USER_CODE_DIR, os.path.join(tmpd, "user"))
-
-# Do the wifi key dance
-default_wifi = True
-if os.path.exists(args.wifi) and args.team_tla is not None:
-    with open(args.wifi, "r") as f:
-        y = yaml.safe_load(f)
-
-    if args.team_tla in y:
-        with open(os.path.join(tmpd, "wifi.yaml"), "w") as f:
-            yaml.safe_dump( { "ssid": "robot-{}".format(args.team_tla),
-                              "key": y[args.team_tla] }, f,
-                            default_flow_style=False )
-            default_wifi = False
-
-if default_wifi:
-    print("Default wifi keys used")
-
-# Temporary directory for the zipfile to reside in
-ziptmpd = tempfile.mkdtemp( suffix="-pyenv" )
-tmpzip = os.path.join( ziptmpd, "robot.zip" )
-
-with zipfile.ZipFile(tmpzip, 'w', zipfile.ZIP_DEFLATED) as zip:
-    for folderName, subfolders, filenames in os.walk(tmpd):
-        relativeFolder = os.path.relpath(folderName, tmpd)
-        for filename in filenames:
-            zip.write(os.path.join(folderName, filename), os.path.join(relativeFolder, filename))
+ENTRYPOINT = "robot.py"
+IGNORE_PATTERNS = [
+    ".git/*",
+    ".gitignore",
+    "*.pyc",
+    "bundle.toml",  # We don't want to try and include this twice!
+    "robot.zip",
+]
 
 
-if os.path.exists( OUTPUT_ZIP ):
-    os.unlink( OUTPUT_ZIP )
+class UnableToCreateUsercodeBundleException(Exception):
+    """Unable to create usercode bundle."""
 
-shutil.move( tmpzip, OUTPUT_ZIP )
 
-def ensureWritable(function, path, exc_info):
-    os.chmod(path, stat.S_IWRITE)
-    function(path)
+def is_file_ignored(filename: str) -> bool:
+    """
+    Check if a file should be ignored and excluded from the zip.
 
-shutil.rmtree( ziptmpd, onerror = ensureWritable)
-shutil.rmtree( tmpd, onerror = ensureWritable)
+    This is defined using the patterns in IGNORE_PATTERNS.
+
+    :param filename: The filename to check.
+    :return: boolean indicating if the file should be ignored.
+    """
+    return any(fnmatch(filename, pattern) for pattern in IGNORE_PATTERNS)
+
+
+def get_bundle_dict(
+    kit_version: str,
+    wifi_ssid: str,
+    wifi_psk: str,
+    wifi_region: str,
+) -> Dict[str, Dict[str, Union[str, bool]]]:
+    """
+    Get a dictionary of the data for bundle.toml.
+
+    This function should be updated if the bundle format changes.
+
+    :param kit_version: The kit version the bundle is targeted for.
+    :param wifi_ssid: The SSID for the WiFi access point.
+    :param wifi_psk: The PSK for the WiFi access point.
+    :param wifi_region: Region that the WiFi hotspot will be used in.
+    """
+    return {
+        "bundle": {
+            "version": "2.0.0",
+        },
+        "kit": {
+            "name": "Student Robotics",
+            "version": kit_version,
+        },
+        "wifi": {
+            "ssid": wifi_ssid,
+            "psk": wifi_psk,
+            "enabled": True,
+            "region": wifi_region,
+        },
+    }
+
+
+def create_usercode_bundle(
+    team_tla: str,
+    usercode_dir: Path,
+    output_file: Path,
+    wifi_psk: str,
+    wifi_region: str,
+) -> None:
+    """
+    Create a usercode bundle for use with SR2021+ kit.
+
+    :param team_tla: TLA of the team that the zip is created for.
+    :param usercode_dir: Directory of usercode, containing a robot.py entrypoint.
+    :param output_file: File to write the zip data to, usually robot.zip.
+    :param wifi_psk: WiFi PSK used to secure robot hotspot.
+    :param wifi_region: Region that the WiFi hotspot will be used in.
+    :raise UnableToCreateUsercodeBundleException: An error occurred during creation.
+    """
+    entrypoint_path = usercode_dir / ENTRYPOINT
+
+    # Validate arguments
+    if not usercode_dir.exists() or not usercode_dir.is_dir():
+        raise UnableToCreateUsercodeBundleException(
+            f"Usercode directory ({usercode_dir}) is not a directory or doesn't exist.",
+        )
+
+    if not entrypoint_path.exists():
+        raise UnableToCreateUsercodeBundleException(
+            f"Usercode directory ({usercode_dir}) does not contain a {ENTRYPOINT} file.",
+        )
+
+    if len(team_tla) == 0:
+        raise UnableToCreateUsercodeBundleException("Team TLA cannot be empty.")
+
+    # Create the ZIP
+    with ZipFile(output_file, "w", compression=ZIP_DEFLATED) as zip_file:
+        # Add the usercode
+        for folderName, subfolders, filenames in os.walk(usercode_dir):
+            relativeFolder = os.path.relpath(folderName, usercode_dir)
+            for filename in filenames:
+                relative_path = os.path.join(relativeFolder, filename)
+                real_path = os.path.join(folderName, filename)
+
+                # Check that the file should not be ignored
+                if not is_file_ignored(relative_path):
+                    zip_file.write(real_path, relative_path)
+
+        # Add bundle.toml
+        bundle_data = get_bundle_dict(
+            "0.0.0.0dev",  # This should eventually be fetched from an API
+            f"robot-{team_tla}",
+            wifi_psk,
+            wifi_region,
+        )
+        bundle_str = toml.dumps(bundle_data)
+        zip_file.writestr("bundle.toml", bundle_str)
+
+
+def main() -> None:
+    """Pack a robot.zip from user code."""
+    parser = argparse.ArgumentParser(description="Pack a robot.zip from user code.")
+    parser.add_argument(
+        "team_tla",
+        nargs="?",
+        default="SRZ",  # Default to SRZ if no TLA is provided
+        help="The TLA of the team the zip is being created for",
+    )
+    parser.add_argument(
+        "usercode",
+        type=Path,
+        help="user code source directory, containing a robot.py",
+    )
+    parser.add_argument(
+        "output",
+        nargs="?",
+        type=Path,
+        help="output zip file",
+        default="robot.zip",
+    )
+    parser.add_argument(
+        "-p",
+        "--psk",
+        default="beeeeees",
+        help="WiFi PSK used to secure robot hotspot",
+    )
+    parser.add_argument(
+        "-r",
+        "--region",
+        default="GB",
+        help="Region information for the WiFi hotspot",
+    )
+
+    args = parser.parse_args()
+
+    try:
+        create_usercode_bundle(
+            args.team_tla,
+            args.usercode,
+            args.output,
+            args.psk,
+            args.region,
+        )
+    except UnableToCreateUsercodeBundleException as e:
+        print(f"Error: {e}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
